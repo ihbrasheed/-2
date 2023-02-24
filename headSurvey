@@ -1,0 +1,128 @@
+pythonCode(1)
+import threading
+import queue
+from scapy.all import *
+
+def scan_devices(ip):
+    devices = []
+    # Scan the network for devices
+    ans, unans = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=ip), timeout=2, verbose=0)
+    # Add each device to the list
+    for sent, received in ans:
+        devices.append({'ip': received.psrc, 'mac': received.hwsrc})
+    return devices
+
+def scan_radios():
+    radios = []
+    # Scan the network for radio devices
+    ans, unans = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/RadioTap()/Dot11(type=1), timeout=2, iface="wlan0mon", verbose=0)
+    # Add each radio device to the list
+    for sent, received in ans:
+        radios.append({'ssid': received.info.decode('utf-8'), 'mac': received.addr2})
+    return radios
+
+def scan_network(ip, result_queue):
+    devices = scan_devices(ip)
+    radios = scan_radios()
+    result_queue.put({'ip': ip, 'devices': devices, 'radios': radios})
+
+def list_devices_and_radios_in_area(ips):
+    result_queue = queue.Queue()
+    threads = []
+    # Start a thread for each IP address to scan
+    for ip in ips:
+        t = threading.Thread(target=scan_network, args=(ip, result_queue))
+        t.start()
+        threads.append(t)
+    # Wait for all threads to complete
+    for t in threads:
+        t.join()
+    # Consolidate the results
+    results = []
+    while not result_queue.empty():
+        results.append(result_queue.get())
+    return results
+
+
+
+
+
+
+
+
+
+pythonCode(2)
+
+import threading
+import queue
+import paramiko
+from netmiko import ConnectHandler
+import pyaudio
+from scapy.all import *
+
+def scan_devices(ip):
+    devices = []
+    # Scan the network for devices
+    ans, unans = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=ip), timeout=2, verbose=0)
+    # Add each device to the list
+    for sent, received in ans:
+        devices.append({'ip': received.psrc, 'mac': received.hwsrc})
+    return devices
+
+def scan_radios():
+    radios = []
+    # Scan the network for radio devices
+    ans, unans = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/RadioTap()/Dot11(type=1), timeout=2, iface="wlan0mon", verbose=0)
+    # Add each radio device to the list
+    for sent, received in ans:
+        radios.append({'ssid': received.info.decode('utf-8'), 'mac': received.addr2})
+    return radios
+
+def scan_network(ip, result_queue):
+    devices = scan_devices(ip)
+    radios = scan_radios()
+    client = None
+    recording = False
+    # Try to connect to the device via SSH
+    try:
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(ip, username='username', password='password')
+        # Use Netmiko to run the "show version" command
+        device = {
+            'device_type': 'cisco_ios',
+            'ip': ip,
+            'username': 'username',
+            'password': 'password'
+        }
+        net_connect = ConnectHandler(**device)
+        output = net_connect.send_command('show version')
+        net_connect.disconnect()
+        # Use PyAudio to record audio from the device's microphone
+        p = pyaudio.PyAudio()
+        stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, input=True, frames_per_buffer=1024)
+        stream.start_stream()
+        recording = True
+        # Save the client object to use later
+        client = ssh
+    except:
+        # Connection failed
+        pass
+    result_queue.put({'ip': ip, 'devices': devices, 'radios': radios, 'ssh_client': client, 'audio_recording': recording})
+
+def list_devices_and_radios_in_area(ips):
+    result_queue = queue.Queue()
+    threads = []
+    # Start a thread for each IP address to scan
+    for ip in ips:
+        t = threading.Thread(target=scan_network, args=(ip, result_queue))
+        t.start()
+        threads.append(t)
+    # Wait for all threads to complete
+    for t in threads:
+        t.join()
+    # Consolidate the results
+    results = []
+    while not result_queue.empty():
+        results.append(result_queue.get())
+    return results
